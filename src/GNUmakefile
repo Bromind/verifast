@@ -367,8 +367,20 @@ ifndef WITHOUT_LABLGTK
 clean::
 	cd linemarks; make clean
 
+branchleft_png.ml: branch-left.png
+	gdk_pixbuf_mlsource branch-left.png > branchleft_png.ml
+
+branchleft_png.cmx: branchleft_png.ml
+	$(OCAMLOPT) $(OCAMLCFLAGS) -c $(LABLGTK_FLAGS) branchleft_png.ml
+
+branchright_png.ml: branch-right.png
+	gdk_pixbuf_mlsource branch-right.png > branchright_png.ml
+
+branchright_png.cmx: branchright_png.ml
+	$(OCAMLOPT) $(OCAMLCFLAGS) -c $(LABLGTK_FLAGS) branchright_png.ml
+
 # Also depend on "vfide.ml": Make ignores our dependency "%.cmx: %.ml".
-vfide.cmx: Fonts.cmx vfide.ml $(GTKSOURCEVIEW_DEPS)
+vfide.cmx: branchleft_png.cmx branchright_png.cmx Fonts.cmx vfide.ml $(GTKSOURCEVIEW_DEPS)
 	@echo "  OCAMLOPT " $@
 ifndef WITHOUT_GTKSOURCEVIEW
 	make -C linemarks OCAMLOPT=${OCAMLOPT} OCAMLCFLAGS="${OCAMLCFLAGS}" LABLGTK_FLAGS="$(LABLGTK_FLAGS_)" linemarks.cmxa
@@ -390,7 +402,7 @@ endif
 	  verify_expr.cmx verifast.cmx simplex.cmx redux.cmx verifastPluginRedux.ml \
 	  shape_analysis/shape_analysis_backend.cmx \
 	  shape_analysis/changelog.cmx shape_analysis/shape_analysis_frontend.cmx \
-	  $(Z3ARGS) Fonts.cmx vfide.cmx
+	  $(Z3ARGS) Fonts.cmx branchleft_png.cmx branchright_png.cmx vfide.cmx
 endif
 ifneq ($(OS), Cygwin)
   ../bin/vfide$(DOTEXE): linux/libPerf_cobjs.a
@@ -550,6 +562,9 @@ depend: $(filter-out vfversion.ml vfversion.mli, $(META_DEPS)) $(AUTOGENERATE_TA
 include .depend
 
 #------------------------------- Release ------------------------------------#
+
+VFVERSION ?= $(shell git describe --always --dirty)
+
 release: release_core
 release_core: test build
 	rm -Rf verifast-$(VFVERSION); mkdir verifast-$(VFVERSION)
@@ -606,8 +621,8 @@ ifeq ($(OS), Linux)
 	cp vfide.sh verifast-$(VFVERSION)/bin/vfide
 ifdef Z3
 	cp $(Z3)/lib/libz3-gmp.so verifast-$(VFVERSION)/bin
-	cp /usr/lib/libgtksourceview-2.0.so.0.0.0 verifast-$(VFVERSION)/bin/libgtksourceview-2.0.so.0
 endif
+	cp /usr/lib/libgtksourceview-2.0.so.0.0.0 verifast-$(VFVERSION)/bin/libgtksourceview-2.0.so.0
 endif
 ifdef Z3
 	cp ../Z3.LICENSE.txt verifast-$(VFVERSION)
@@ -615,7 +630,10 @@ endif
 ifeq ($(OS), Darwin)
 	cd verifast-$(VFVERSION)/bin; mv vfide vfide-core
 	cp vfide-mac.sh verifast-$(VFVERSION)/bin/vfide
-	cp -R ~/Desktop/GtkDemo.app/Contents/Resources/* verifast-$(VFVERSION)
+	mkdir verifast-$(VFVERSION)/lib
+	for i in $$( cat vfide-osx-local-dlls.txt ); do cp $$i verifast-$(VFVERSION)/lib; done
+	mkdir -p verifast-$(VFVERSION)/lib/gdk-pixbuf-2.0/2.10.0
+	echo > verifast-$(VFVERSION)/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache
 endif
 	cp -R ../examples verifast-$(VFVERSION)
 	cp -R ../help verifast-$(VFVERSION)
@@ -629,4 +647,20 @@ ifeq ($(OS), Cygwin)
 	cp ../test.bat verifast-$(VFVERSION)
 else
 	cp ../test.sh verifast-$(VFVERSION)
+endif
+
+ifeq ($(OS), Darwin)
+  RELEASE_SUFFIX=-osx
+else
+  RELEASE_SUFFIX=
+endif
+
+nightly: release
+ifeq ($(OS), Cygwin)
+	rm verifast-nightly.zip || true
+	7z a verifast-nightly.zip verifast-$(VFVERSION)
+else
+	rm -Rf ../upload || true
+	mkdir ../upload || true
+	tar czf ../upload/verifast-nightly$(RELEASE_SUFFIX).tar.gz verifast-$(VFVERSION)
 endif

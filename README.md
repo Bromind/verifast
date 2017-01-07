@@ -13,16 +13,29 @@ VeriFast is a research prototype of a tool for modular formal verification of co
 
 The VeriFast source code and binaries are released under the [MIT license](LICENSE.md).
 
-Binary releases
----------------
+Binaries
+--------
 
-For now, see [here](http://distrinet.cs.kuleuven.be/software/VeriFast/) for binary releases.
+A few minutes after each push to the master branch, binary packages become available at the following URLs:
+
+- [Windows](https://ci.appveyor.com/api/projects/verifast/verifast/artifacts/src/verifast-nightly.zip?branch=master)
+- [Linux/x64](http://82076e0e62875f063ae8-929808a701855dfb71539d0a4342d4be.r54.cf5.rackcdn.com/verifast-nightly.tar.gz)
+- [OS X](http://82076e0e62875f063ae8-929808a701855dfb71539d0a4342d4be.r54.cf5.rackcdn.com/verifast-nightly-osx.tar.gz)
+
+For the latest named releases, for now see [here](http://distrinet.cs.kuleuven.be/software/VeriFast/).
+
+Simply extract the files from the archive to any location in your filesystem. All files in the archive are in a directory named `verifast-HASH` where `HASH` is the Git commit hash. For example, on Linux:
+
+    tar xzf ~/Downloads/verifast-nightly.tar.gz
+    cd verifast-<TAB>  # Press Tab to autocomplete
+    bin/vfide examples/java/termination/Stack.jarsrc  # Launch the VeriFast IDE with the specified example
+    ./test.sh  # Run the test suite (verifies all examples)
 
 Compiling
 ---------
 - [Windows](README.Windows.md)
 - [Linux](README.Linux.md)
-- [Mac OS X](README.MacOS.md)
+- [OS X](README.MacOS.md)
 
 Documentation
 -------------

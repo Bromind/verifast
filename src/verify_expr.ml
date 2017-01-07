@@ -28,6 +28,7 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
   and expr_assigned_variables e =
     match e with
       Operation (l, op, es) | WOperation (l, op, es, _) -> flatmap expr_assigned_variables es
+    | TruncatingExpr (l, e) -> expr_assigned_variables e
     | Read (l, e, f) -> expr_assigned_variables e
     | WRead (l, e, fparent, fname, frange, fstatic, fvalue, fghost) -> expr_assigned_variables e
     | ReadArray (l, ea, ei) -> expr_assigned_variables ea @ expr_assigned_variables ei
@@ -42,7 +43,7 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     | IfExpr (l, e1, e2, e3) -> expr_assigned_variables e1 @ expr_assigned_variables e2 @ expr_assigned_variables e3
     | SwitchExpr (l, e, cs, cdef_opt, _) ->
       expr_assigned_variables e @ flatmap (fun (SwitchExprClause (l, ctor, xs, e)) -> expr_assigned_variables e) cs @ (match cdef_opt with None -> [] | Some (l, e) -> expr_assigned_variables e)
-    | CastExpr (l, trunc, te, e) -> expr_assigned_variables e
+    | CastExpr (l, te, e) -> expr_assigned_variables e
     | Upcast (e, fromType, toType) -> expr_assigned_variables e
     | TypedExpr (e, t) -> expr_assigned_variables e
     | WidenedParameterArgument e -> expr_assigned_variables e
@@ -988,6 +989,7 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     match e with
       True _ | False _ | Null _ | Var _ | WVar _ | IntLit _ | WIntLit _ | RealLit _ | StringLit(_, _) | ClassLit(_) -> ()
     | Operation(_, _, es) | WOperation (_, _, es, _) -> List.iter (fun e -> expr_mark_addr_taken e locals) es
+    | TruncatingExpr (_, e) -> expr_mark_addr_taken e locals
     | AddressOf(_, (Var (_, x) | WVar (_, x, _))) -> mark_if_local locals x
     | Read(_, e, _) -> expr_mark_addr_taken e locals
     | ArrayLengthExpr(_, e) -> expr_mark_addr_taken e locals
@@ -1008,7 +1010,7 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     | IfExpr(_, e1, e2, e3) -> List.iter (fun e -> expr_mark_addr_taken e locals) [e1;e2;e3]
     | SwitchExpr(_, e, cls, dcl, _) -> List.iter (fun (SwitchExprClause(_, _, _, e)) -> expr_mark_addr_taken e locals) cls; (match dcl with None -> () | Some((_, e)) -> expr_mark_addr_taken e locals)
     | PredNameExpr _ -> ()
-    | CastExpr(_, _, _, e) ->  expr_mark_addr_taken e locals
+    | CastExpr(_, _, e) ->  expr_mark_addr_taken e locals
     | Upcast (e, _, _) -> expr_mark_addr_taken e locals
     | TypedExpr (e, t) -> expr_mark_addr_taken e locals
     | WidenedParameterArgument e -> expr_mark_addr_taken e locals
@@ -1124,6 +1126,7 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     match e with
       True _ | False _ | Null _ | Var _ | WVar _ | IntLit _ | WIntLit _ | RealLit _ | StringLit(_, _) | ClassLit(_) -> []
     | Operation(_, _, es) | WOperation (_, _, es, _) -> List.flatten (List.map (fun e -> expr_address_taken e) es)
+    | TruncatingExpr (_, e) -> expr_address_taken e
     | Read(_, e, _) -> expr_address_taken e
     | ArrayLengthExpr(_, e) -> expr_address_taken e
     | WRead(_, e, _, _, _, _, _, _) -> expr_address_taken e
@@ -1143,7 +1146,7 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     | IfExpr(_, e1, e2, e3) -> (expr_address_taken e1) @ (expr_address_taken e2) @ (expr_address_taken e3)
     | SwitchExpr(_, e, cls, dcl, _) -> List.flatten (List.map (fun (SwitchExprClause(_, _, _, e)) -> expr_address_taken e) cls) @ (match dcl with None -> [] | Some((_, e)) -> expr_address_taken e)
     | PredNameExpr _ -> []
-    | CastExpr(_, _, _, e) -> expr_address_taken e
+    | CastExpr(_, _, e) -> expr_address_taken e
     | Upcast (e, fromType, toType) -> expr_address_taken e
     | TypedExpr (e, t) -> expr_address_taken e
     | WidenedParameterArgument e -> expr_address_taken e
@@ -1416,6 +1419,18 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
         let body = ctxt#mk_eq app (ctxt#mk_lt (ctxt#mk_app func_rank [f]) (ctxt#mk_app func_rank [g])) in
         ctxt#end_formal;
         ctxt#assume_forall "func_lt" [app] [ctxt#type_int; ctxt#type_int] body
+    end else begin
+      match try_assoc "java.lang.Class_lt" purefuncmap with
+        None -> ()
+      | Some (_, _, _, _, (class_lt, _)) ->
+        (* forall C1, C2. Class_lt(C1, C2) = (class_rank(C1) < class_rank(C2)) *)
+        ctxt#begin_formal;
+        let c1 = ctxt#mk_bound 0 ctxt#type_int in
+        let c2 = ctxt#mk_bound 1 ctxt#type_int in
+        let app = ctxt#mk_app class_lt [c1; c2] in
+        let body = ctxt#mk_eq app (ctxt#mk_lt (ctxt#mk_app class_rank [c1]) (ctxt#mk_app class_rank [c2])) in
+        ctxt#end_formal;
+        ctxt#assume_forall "Class_lt" [app] [ctxt#type_int; ctxt#type_int] body
     end
   
   type leminfo =
@@ -1672,10 +1687,11 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     | False _ -> true
     | WVar (_, x, scope) -> scope = LocalVar
     | WOperation(_, _, es, _) -> List.for_all is_safe_expr es
+    | TruncatingExpr (_, e) -> is_safe_expr e
     | IfExpr(_, e1, e2, e3) -> List.for_all is_safe_expr [e1; e2; e3]
     | SizeofExpr(_, _) -> true
     | AddressOf(_, e) -> is_safe_expr e
-    | CastExpr (_, _, _, e) -> is_safe_expr e
+    | CastExpr (_, _, e) -> is_safe_expr e
     | Upcast (e, _, _) -> is_safe_expr e
     | _ -> false
   
@@ -1849,7 +1865,7 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     in
     match e with
     | Upcast (w, _, _) -> eval_h_core readonly h env w cont
-    | CastExpr (lc, false, ManifestTypeExpr (_, tp), (WFunCall (l, "malloc", [], [SizeofExpr (ls, StructTypeExpr (lt, tn))]) as e)) ->
+    | CastExpr (lc, ManifestTypeExpr (_, tp), (WFunCall (l, "malloc", [], [SizeofExpr (ls, StructTypeExpr (lt, tn))]) as e)) ->
       expect_type lc (Some pure) (PtrType (StructType tn)) tp;
       verify_expr readonly h env xo e cont
     | WFunCall (l, "malloc", [], [Operation (lmul, Mul, ([e; SizeofExpr (ls, te)] | [SizeofExpr (ls, te); e]))]) ->
@@ -1973,15 +1989,17 @@ module VerifyExpr(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     | WMethodCall (l, tn, m, pts, args, fb) when m <> "getClass" ->
       let (lm, gh, rt, xmap, pre, post, epost, terminates, is_upcall, target_class, fb', v) =
         match try_assoc tn classmap with
-          Some {cmeths} ->
+          Some {cfinal; cmeths} ->
           let MethodInfo (lm, gh, rt, xmap, pre, pre_tenv, post, epost, pre_dyn, post_dyn, epost_dyn, terminates, ss, fb, v, is_override, abstract) = List.assoc (m, pts) cmeths in
+          let can_be_overridden = fb = Instance && cfinal = ExtensibleClass && v <> Private in 
           let is_upcall =
-            match ss, fb, leminfo with
-              None, Static, _ -> true
-            | Some (Some (_, rank)), Static, RealMethodInfo (Some rank') when rank < rank' -> true
+            not can_be_overridden &&
+            match ss, leminfo with
+              None, _ -> true
+            | Some (Some (_, rank)), RealMethodInfo (Some rank') when rank < rank' -> true
             | _ -> false
           in
-          let target_class = match fb with Static -> Some tn | Instance -> None in
+          let target_class = if can_be_overridden then None else Some tn in
           (lm, gh, rt, xmap, pre_dyn, post_dyn, epost_dyn, terminates, is_upcall, target_class, fb, v)
         | _ ->
           let InterfaceInfo (_, _, methods, _, _) = List.assoc tn interfmap in
